@@ -15,6 +15,7 @@ node_modules/
 
 # csv files
 data/*.csv
+!data/danbooru_tags_ja_readings.csv
 data/.download
 
 # csv meta information

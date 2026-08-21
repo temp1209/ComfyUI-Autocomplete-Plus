@@ -22,6 +22,7 @@ import {
     openTagWikiUrl
 } from './utils.js';
 import { settingValues } from './settings.js';
+import { isRomaji, toHiragana } from './thirdparty/wanakana.esm.js';
 
 // --- Autocomplete Logic ---
 
@@ -101,6 +102,16 @@ function searchCompletionCandidates(textareaElement) {
     const hiraQuery = kataToHira(partialTag);
     if (hiraQuery !== partialTag) {
         queryVariations.add(hiraQuery);
+    }
+
+    // Romaji input (e.g. "shu" or "syu") -> Hiragana, so typing without switching
+    // IME still matches Japanese aliases. wanakana normalizes both Hepburn and
+    // Kunrei-shiki spellings (shi/si, tsu/tu, shu/syu, ...) to the same kana.
+    if (isRomaji(partialTag)) {
+        const romajiQuery = toHiragana(partialTag);
+        if (romajiQuery !== partialTag) {
+            queryVariations.add(romajiQuery);
+        }
     }
 
     if (settingValues.useFastSearch) {
@@ -208,15 +219,27 @@ function searchWithFlexSearch(partialTag, queryVariations) {
         if (!autoCompleteData[source].flexSearchDocument) continue;
         if (mergedResult.length >= settingValues.maxSuggestions) break;
 
-        // Use the FlexSearch Document to search
+        // Use the FlexSearch Document to search.
         // NOTE: The limit param is reflected separately for "tag" and "alias".
-        let searchResult = autoCompleteData[source].flexSearchDocument.search(partialTag, {
-            field: ["tag", "alias"],
-            limit: Math.min(settingValues.maxSuggestions * 10, 500),
-            merge: true,
-            suggest: false,
-            cache: true,
-        });
+        // Search every query variation (e.g. the romaji->hiragana form), not
+        // just partialTag as typed - the index stores CJK aliases normalized
+        // to hiragana, so a romaji query wouldn't match anything on its own.
+        const searchedIds = new Set();
+        let searchResult = [];
+        for (const query of new Set([partialTag, ...queryVariations])) {
+            const variantResult = autoCompleteData[source].flexSearchDocument.search(query, {
+                field: ["tag", "alias"],
+                limit: Math.min(settingValues.maxSuggestions * 10, 500),
+                merge: true,
+                suggest: false,
+                cache: true,
+            });
+            for (const r of (variantResult || [])) {
+                if (searchedIds.has(r.id)) continue;
+                searchedIds.add(r.id);
+                searchResult.push(r);
+            }
+        }
 
         if (!searchResult || searchResult.length <= 0) continue;
 
